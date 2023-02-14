@@ -37,7 +37,7 @@ if __version_info__ < (20, 0, 0, "alpha", 1):
         f"visit https://docs.python-telegram-bot.org/en/v{TG_VER}/examples.html"
     )
 from telegram import ForceReply, Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, ConversationHandler
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, ConversationHandler, CallbackQueryHandler
 import random
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 
@@ -47,8 +47,9 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-IMAGE_INPUTING, UPLOAD_IMAGES, PROCESSING, MARKING, DOWNLOADING_RESULTS, SKIP_PROCESSING = range(
-    5)
+
+SELECTING_ACTION, IMAGE_INPUTING, UPLOAD_IMAGES, PROCESSING, MARKING, DOWNLOADING_RESULTS, SKIP_PROCESSING = map(
+    chr, range(7))
 
 face_embeddings = pickle.load(open("face_embeddings.pkl", "rb"))
 face_locations = pickle.load(open('face_locations.pkl', 'rb'))
@@ -100,28 +101,51 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # await update.message.reply_text("Please choose:", reply_markup=reply_markup)
     # await update.message.reply_text("Enter password, or upload images (jpg, zip)", markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
     # )
+    text = (
+        "You may choose to add a family member, yourself, show the gathered data, or end the "
+        "conversation. To abort, simply type /stop."
+    )
+    await update.message.reply_text(
+        "Hi, I'm Family Bot and I'm here to help you gather information about your family."
+    )
+
     if has_user_preprocessed_images():
-        reply_keyboard = [['Yes', 'No']]
-        markup_key = ReplyKeyboardMarkup(
-            reply_keyboard, one_time_keyboard=True)
-        await update.message.reply_text(text='You have already preprocessed images. Do you want continue?', reply_markup=markup_key)
-        return SKIP_PROCESSING
+        # reply_keyboard = [['Yes', 'No']]
+        # markup_key = ReplyKeyboardMarkup(
+        # reply_keyboard, one_time_keyboard=True)
+        # await update.message.reply_text(text='You have already preprocessed images. Do you want continue?', reply_markup=markup_key)
+        buttons = [[
+            InlineKeyboardButton(text='Yes', callback_data=str(MARKING)),
+            InlineKeyboardButton(text='No', callback_data=str(UPLOAD_IMAGES))
+        ]]
+        keyboard = InlineKeyboardMarkup(buttons)
+        await update.message.reply_text('You have already preprocessed images. Do you want continue?', reply_markup=keyboard)
+    return SELECTING_ACTION
+
+
+async def upload_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    print('hello blyat')
+    await update.message.reply_text("Enter password, or upload images (jpg, zip)")
+    return PROCESSING
+
+
+async def skip_processing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    print(update.message.text)
+    if update.message.text == 'Yes':
+        return MARKING
     else:
         return UPLOAD_IMAGES
 
 
-async def upload_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text("Enter password, or upload images (jpg, zip)")
+async def marking_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.callback_query.answer()
+    text = 'Marking'
+
+    await update.callback_query.edit_message_text(text=text)
 
 
-async def skip_processing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.message.text == 'Yes':
-        return PROCESSING
-    else:
-        return MARKING
-
-
-async def processing_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def processing_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    print('processing images')
     msg = await update.message.reply_text("Processing images...")
 
     names = [f'input/{str(x).zfill(4)}.JPG' for x in range(579)]
@@ -139,14 +163,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text("Help!")
 
 
-# async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-#     """Echo the user message."""
-#     await update.message.reply_text(update.message.text)
-# async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # await update.
-
 async def done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(f"Until next time!")
+
+
+async def get_results(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text(f'')
 
 
 async def random_face(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -168,16 +190,14 @@ def main() -> None:
     application = Application.builder().token(
         dotenv_values(".env")['BOT_TOKEN']).build()
 
-    # on different commands - answer in Telegram
-    # application.add_handler(CommandHandler("start", start))
-    # application.add_handler(CommandHandler('random', random_face))
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
             UPLOAD_IMAGES: [
-                MessageHandler(filters.Regex("^Yes$") |
-                               filters.Regex("^No$"), upload_images)
+                MessageHandler(filters.TEXT, upload_images)
             ],
+            SELECTING_ACTION: [CallbackQueryHandler(marking_images, pattern="^" + str(MARKING) + "$"),
+                               CallbackQueryHandler(upload_images, pattern="^" + str(UPLOAD_IMAGES) + "$")],
             PROCESSING: [
                 MessageHandler(
                     filters.TEXT & ~(filters.COMMAND | filters.Regex(
@@ -185,8 +205,7 @@ def main() -> None:
                 )
             ],
             MARKING: [
-                MessageHandler(filters.Regex("^Yes$") |
-                               filters.Regex("^No$"), done)
+                CallbackQueryHandler(done, pattern="^" + str(MARKING) + "$")
             ],
             DOWNLOADING_RESULTS: [],
             SKIP_PROCESSING: [MessageHandler(
