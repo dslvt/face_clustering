@@ -22,6 +22,7 @@ import face_recognition as fr
 import tqdm
 from PIL import Image
 import io
+import time
 
 from telegram import __version__ as TG_VER
 
@@ -48,8 +49,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-SELECTING_ACTION, IMAGE_INPUTING, UPLOAD_IMAGES, PROCESSING, MARKING, DOWNLOADING_RESULTS, SKIP_PROCESSING = map(
-    chr, range(7))
+SELECTING_ACTION, IMAGE_INPUTING, UPLOAD_IMAGES, PROCESSING, MARKING, DOWNLOADING_RESULTS, SKIP_PROCESSING, DONE = map(
+    chr, range(8))
 
 face_embeddings = pickle.load(open("face_embeddings.pkl", "rb"))
 face_locations = pickle.load(open('face_locations.pkl', 'rb'))
@@ -71,36 +72,6 @@ def has_user_preprocessed_images():
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # print(type(context))
-    # print(context)
-    # print(dir(context))
-    """Send a message when the command /start is issued."""
-    # names = [f'input/{str(x).zfill(4)}.JPG' for x in range(579)]
-
-    # for i, name in enumerate(tqdm.tqdm(names[:20])):
-    #     image = fr.load_image_file(name)
-    #     for fc in face_locations[i]:
-    #         faces.append(image[fc[0]:fc[2], fc[3]:fc[1], :])
-
-    # user = update.effective_user
-    # await update.message.reply_html(
-    #     rf"Hi {user.mention_html()}! Enter password:",
-    #     reply_markup=ForceReply(selective=False),
-    # )
-
-    # keyboard = [
-    #     [
-    #         InlineKeyboardButton("Option 1", callback_data="1"),
-    #         InlineKeyboardButton("Option 2", callback_data="2"),
-    #     ],
-    #     [InlineKeyboardButton("", callback_data="3")],
-    # ]
-
-    # reply_markup = InlineKeyboardMarkup(keyboard)
-
-    # await update.message.reply_text("Please choose:", reply_markup=reply_markup)
-    # await update.message.reply_text("Enter password, or upload images (jpg, zip)", markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
-    # )
     text = (
         "You may choose to add a family member, yourself, show the gathered data, or end the "
         "conversation. To abort, simply type /stop."
@@ -124,17 +95,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def upload_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    print('hello blyat')
-    await update.message.reply_text("Enter password, or upload images (jpg, zip)")
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(text='Send images there')
     return PROCESSING
-
-
-async def skip_processing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    print(update.message.text)
-    if update.message.text == 'Yes':
-        return MARKING
-    else:
-        return UPLOAD_IMAGES
 
 
 async def marking_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -142,6 +105,7 @@ async def marking_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     text = 'Marking'
 
     await update.callback_query.edit_message_text(text=text)
+    return SELECTING_ACTION
 
 
 async def processing_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -156,6 +120,13 @@ async def processing_images(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         image = fr.load_image_file(name)
         for fc in face_locations[i]:
             faces.append(image[fc[0]:fc[2], fc[3]:fc[1], :])
+
+
+async def downloading_results(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    time.sleep(1)
+    # await update.callback_query.edit_message_text(text='Downloading results...')
+    msg = await update.message.reply_text("Downloading results...")
+    return DONE
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -197,7 +168,10 @@ def main() -> None:
                 MessageHandler(filters.TEXT, upload_images)
             ],
             SELECTING_ACTION: [CallbackQueryHandler(marking_images, pattern="^" + str(MARKING) + "$"),
-                               CallbackQueryHandler(upload_images, pattern="^" + str(UPLOAD_IMAGES) + "$")],
+                               CallbackQueryHandler(
+                                   upload_images, pattern="^" + str(UPLOAD_IMAGES) + "$"),
+                               CallbackQueryHandler(downloading_results, pattern="^" +
+                                                    str(DOWNLOADING_RESULTS) + "$")],
             PROCESSING: [
                 MessageHandler(
                     filters.TEXT & ~(filters.COMMAND | filters.Regex(
@@ -205,11 +179,18 @@ def main() -> None:
                 )
             ],
             MARKING: [
-                CallbackQueryHandler(done, pattern="^" + str(MARKING) + "$")
+                CallbackQueryHandler(
+                    marking_images, pattern="^" + str(MARKING) + "$")
             ],
-            DOWNLOADING_RESULTS: [],
-            SKIP_PROCESSING: [MessageHandler(
-                filters.Regex("^(Yes|No)$"), skip_processing)]
+            DOWNLOADING_RESULTS: [
+                CallbackQueryHandler(
+                    downloading_results, pattern="^" +
+                    str(DOWNLOADING_RESULTS) + "$"
+                )
+            ],
+            DONE: [
+                CallbackQueryHandler(done, pattern="^" + str(DONE) + "$")
+            ]
         },
         fallbacks=[MessageHandler(filters.Regex("^Done$"), done)],
     )
