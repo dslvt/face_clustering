@@ -79,7 +79,6 @@ async def upload_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def marking_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = 'Enter name of this person:'
-    print('helllo')
 
     await update.callback_query.answer()
     await update.callback_query.edit_message_text(text=text)
@@ -141,7 +140,6 @@ async def show_full_image(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def get_next_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.callback_query.answer()
-    print(update.callback_query.data)
     buttons = [[
         InlineKeyboardButton(text='Yes', callback_data=str(NEXT_IMAGE)),
         InlineKeyboardButton(text='No', callback_data=str(NEXT_IMAGE)),
@@ -149,7 +147,9 @@ async def get_next_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                              callback_data=str(NEXT_PERSON)),
     ]]
     keyboard = InlineKeyboardMarkup(buttons)
-    await update.callback_query.edit_message_text(text=f'Is that him/her? {random.randint(0, 10)}', reply_markup=keyboard)
+    await update.callback_query.edit_message_text(text=f'Is that him/her? {random.randint(0, 1000)}', reply_markup=keyboard)
+
+    return NEXT_IMAGE
 
 
 async def create_person(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -181,9 +181,8 @@ def main() -> None:
             )],
             NEXT_IMAGE: [CallbackQueryHandler(
                 get_next_image, pattern='^' + str(NEXT_IMAGE) + '$'
-            )],
-            NEXT_PERSON: [CallbackQueryHandler(
-                marking_images, pattern="^" + str(NEXT_PERSON) + "$")]
+            ), CallbackQueryHandler(
+                marking_images, pattern="^" + str(NEXT_PERSON) + "$")],
         },
         fallbacks=[MessageHandler(filters.Regex("^Done$"), done)],
         map_to_parent={
