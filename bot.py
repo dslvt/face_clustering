@@ -1,20 +1,4 @@
 from dotenv import dotenv_values
-
-#!/usr/bin/env python
-# pylint: disable=unused-argument, wrong-import-position
-# This program is dedicated to the public domain under the CC0 license.
-
-"""
-Simple Bot to reply to Telegram messages.
-First, a few handler functions are defined. Then, those functions are passed to
-the Application and registered at their respective places.
-Then, the bot is started and runs until we press Ctrl-C on the command line.
-Usage:
-Basic Echobot example, repeats messages.
-Press Ctrl-C on the command line or send a signal to the process to stop the
-bot.
-"""
-
 import logging
 import pickle
 import random
@@ -23,6 +7,7 @@ import tqdm
 from PIL import Image
 import io
 import time
+from person import Person, FImage
 
 from telegram import __version__ as TG_VER
 
@@ -49,8 +34,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-SELECTING_ACTION, IMAGE_INPUTING, UPLOAD_IMAGES, PROCESSING, MARKING, DOWNLOADING_RESULTS, SKIP_PROCESSING, DONE = map(
-    chr, range(8))
+SELECTING_ACTION, IMAGE_INPUTING, UPLOAD_IMAGES, PROCESSING, \
+    MARKING, DOWNLOADING_RESULTS, SKIP_PROCESSING, DONE, NAME_PERSON, SHOW_FULL_IMAGE, \
+    NEXT_PERSON, NEXT_IMAGE, ENTER_NAME = map(
+        chr, range(13))
 
 face_embeddings = pickle.load(open("face_embeddings.pkl", "rb"))
 face_locations = pickle.load(open('face_locations.pkl', 'rb'))
@@ -67,24 +54,13 @@ markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 def has_user_preprocessed_images():
     return True
 
-# Define a few command handlers. These usually take the two arguments update and
-# context.
-
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = (
-        "You may choose to add a family member, yourself, show the gathered data, or end the "
-        "conversation. To abort, simply type /stop."
-    )
     await update.message.reply_text(
-        "Hi, I'm Family Bot and I'm here to help you gather information about your family."
+        "Hi, I'm Wedding Face bot."
     )
 
     if has_user_preprocessed_images():
-        # reply_keyboard = [['Yes', 'No']]
-        # markup_key = ReplyKeyboardMarkup(
-        # reply_keyboard, one_time_keyboard=True)
-        # await update.message.reply_text(text='You have already preprocessed images. Do you want continue?', reply_markup=markup_key)
         buttons = [[
             InlineKeyboardButton(text='Yes', callback_data=str(MARKING)),
             InlineKeyboardButton(text='No', callback_data=str(UPLOAD_IMAGES))
@@ -97,19 +73,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def upload_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.callback_query.answer()
     await update.callback_query.edit_message_text(text='Send images there')
+
     return PROCESSING
 
 
 async def marking_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.callback_query.answer()
-    text = 'Marking'
+    text = 'Enter name of this person:'
+    print('helllo')
 
+    await update.callback_query.answer()
     await update.callback_query.edit_message_text(text=text)
-    return SELECTING_ACTION
+
+    random_embedding = None
+    user_photo = None
+
+    return ENTER_NAME
 
 
 async def processing_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    print('processing images')
     msg = await update.message.reply_text("Processing images...")
 
     names = [f'input/{str(x).zfill(4)}.JPG' for x in range(579)]
@@ -154,6 +135,35 @@ async def random_face(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_photo(byte_im)
 
 
+async def show_full_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    pass
+
+
+async def get_next_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.callback_query.answer()
+    print(update.callback_query.data)
+    buttons = [[
+        InlineKeyboardButton(text='Yes', callback_data=str(NEXT_IMAGE)),
+        InlineKeyboardButton(text='No', callback_data=str(NEXT_IMAGE)),
+        InlineKeyboardButton(text='Add new person',
+                             callback_data=str(NEXT_PERSON)),
+    ]]
+    keyboard = InlineKeyboardMarkup(buttons)
+    await update.callback_query.edit_message_text(text=f'Is that him/her? {random.randint(0, 10)}', reply_markup=keyboard)
+
+
+async def create_person(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    buttons = [[
+        InlineKeyboardButton(text='Yes', callback_data=str(NEXT_IMAGE)),
+        InlineKeyboardButton(text='No', callback_data=str(NEXT_IMAGE)),
+        InlineKeyboardButton(text='Add new person',
+                             callback_data=str(NEXT_PERSON)),
+    ]]
+    keyboard = InlineKeyboardMarkup(buttons)
+    await update.message.reply_text('Is that him/her?', reply_markup=keyboard)
+    return NEXT_IMAGE
+
+
 def main() -> None:
     """Run the bot."""
     # Create the Application and pass it your bot's token.
@@ -161,13 +171,33 @@ def main() -> None:
     application = Application.builder().token(
         dotenv_values(".env")['BOT_TOKEN']).build()
 
+    marking_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(
+            marking_images, pattern="^" + str(MARKING) + "$")],
+        states={
+            ENTER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_person)],
+            SHOW_FULL_IMAGE: [CallbackQueryHandler(
+                show_full_image, pattern='^' + str(SHOW_FULL_IMAGE) + '$'
+            )],
+            NEXT_IMAGE: [CallbackQueryHandler(
+                get_next_image, pattern='^' + str(NEXT_IMAGE) + '$'
+            )],
+            NEXT_PERSON: [CallbackQueryHandler(
+                marking_images, pattern="^" + str(NEXT_PERSON) + "$")]
+        },
+        fallbacks=[MessageHandler(filters.Regex("^Done$"), done)],
+        map_to_parent={
+            DONE: SELECTING_ACTION
+        }
+    )
+
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
             UPLOAD_IMAGES: [
                 MessageHandler(filters.TEXT, upload_images)
             ],
-            SELECTING_ACTION: [CallbackQueryHandler(marking_images, pattern="^" + str(MARKING) + "$"),
+            SELECTING_ACTION: [marking_conv,
                                CallbackQueryHandler(
                                    upload_images, pattern="^" + str(UPLOAD_IMAGES) + "$"),
                                CallbackQueryHandler(downloading_results, pattern="^" +
@@ -177,10 +207,6 @@ def main() -> None:
                     filters.TEXT & ~(filters.COMMAND | filters.Regex(
                         "^Done$")), processing_images
                 )
-            ],
-            MARKING: [
-                CallbackQueryHandler(
-                    marking_images, pattern="^" + str(MARKING) + "$")
             ],
             DOWNLOADING_RESULTS: [
                 CallbackQueryHandler(
