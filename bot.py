@@ -78,10 +78,21 @@ async def upload_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def marking_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = 'Enter name of this person:'
+    text = f'Enter name of this person or /skip if it is not a person: {random.randint(0, 1000)}'
 
     await update.callback_query.answer()
     await update.callback_query.edit_message_text(text=text)
+
+    random_embedding = None
+    user_photo = None
+
+    return ENTER_NAME
+
+
+async def m_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = f'Enter name of this person or /skip if it is not a person: {random.randint(0, 1000)}'
+
+    await update.message.reply_text(text)
 
     random_embedding = None
     user_photo = None
@@ -175,7 +186,7 @@ def main() -> None:
         entry_points=[CallbackQueryHandler(
             marking_images, pattern="^" + str(MARKING) + "$")],
         states={
-            ENTER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_person)],
+            ENTER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_person), CommandHandler('skip', m_images)],
             SHOW_FULL_IMAGE: [CallbackQueryHandler(
                 show_full_image, pattern='^' + str(SHOW_FULL_IMAGE) + '$'
             )],
