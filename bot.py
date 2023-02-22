@@ -10,6 +10,7 @@ import time
 from person import Person, FImage
 import hashlib
 import os
+import re
 
 
 from telegram import __version__ as TG_VER
@@ -39,8 +40,8 @@ logger = logging.getLogger(__name__)
 
 SELECTING_ACTION, IMAGE_INPUTING, UPLOAD_IMAGES, PROCESSING, \
     MARKING, DOWNLOADING_RESULTS, SKIP_PROCESSING, DONE, NAME_PERSON, SHOW_FULL_IMAGE, \
-    NEXT_PERSON, NEXT_IMAGE, ENTER_NAME = map(
-        chr, range(13))
+    NEXT_PERSON, NEXT_IMAGE, ENTER_NAME, HAS_MESSAGE = map(
+        chr, range(14))
 
 face_embeddings = pickle.load(open("face_embeddings.pkl", "rb"))
 face_locations = pickle.load(open('face_locations.pkl', 'rb'))
@@ -55,10 +56,20 @@ markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 
 
 def has_user_preprocessed_images(user_name):
+    # TODO: split into create directories and has index
     directory = f'data/{user_name}'
-    full_path = f'{directory}/index.pkl'
     if not os.path.exists(directory):
         os.makedirs(directory)
+
+    directory_raw_photos = f'data/{user_name}/raw'
+    if not os.path.exists(directory_raw_photos):
+        os.makedirs(directory_raw_photos)
+
+    directory_faces = f'data/{user_name}/faces'
+    if not os.path.exists(directory_faces):
+        os.makedirs(directory_faces)
+
+    full_path = f'{directory}/index.pkl'
     return os.path.exists(full_path)
 
 
@@ -74,6 +85,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         ]]
         keyboard = InlineKeyboardMarkup(buttons)
         await update.message.reply_text('You have already preprocessed images. Do you want continue?', reply_markup=keyboard)
+        context.user_data[HAS_MESSAGE] = True
         return SELECTING_ACTION
     else:
         await update.message.reply_text(text='Send images there. zip or jpeg(s)')
@@ -83,7 +95,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def upload_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     photo_file = await update.message.photo[-1].get_file()
     photo_name = photo_file.file_id
-    await photo_file.download_to_drive(f'data/{update.message.chat.username}/raw_{photo_name}')
+
+    directory = f'data/{update.message.chat.username}/raw'
+    await photo_file.download_to_drive(f'{directory}/{photo_name}')
 
     return UPLOAD_IMAGES
 
@@ -91,8 +105,13 @@ async def upload_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def marking_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = f'Enter name of this person or /skip if it is not a person: {random.randint(0, 1000)}'
 
-    await update.callback_query.answer()
-    await update.callback_query.edit_message_text(text=text)
+    if context.user_data.get(HAS_MESSAGE):
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text(text=text)
+    else:
+        await update.message.reply_text(text)
+
+    context.user_data[HAS_MESSAGE] = True
 
     random_embedding = None
     user_photo = None
@@ -112,16 +131,35 @@ async def m_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def processing_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    username = update.message.chat.username
     msg = await update.message.reply_text("Processing images...")
 
-    names = [f'input/{str(x).zfill(4)}.JPG' for x in range(579)]
+    directory = f'data/{username}/raw'
+    names = os.listdir(directory)
+    names = [f'{directory}/{name}' for name in names]
 
-    for i, name in enumerate(names[:20]):
-        update_message = f"Processed {i + 1}/{len(names)} images. Found {len(faces)} faces"
-        await context.bot.edit_message_text(message_id=msg.message_id, text=update_message, chat_id=context._chat_id)
+    index = []
+
+    for i, name in enumerate(names):
+        update_message = f"Processed {i}/{len(names)} images. Found {len(index)} faces"
+        if i % 10 == 0:
+            await context.bot.edit_message_text(message_id=msg.message_id, text=update_message, chat_id=context._chat_id)
         image = fr.load_image_file(name)
-        for fc in face_locations[i]:
-            faces.append(image[fc[0]:fc[2], fc[3]:fc[1], :])
+        locations = fr.face_locations(image)
+        embeddings = fr.face_encodings(image)
+        for j, fl in enumerate(locations):
+            face_path = f'data/{username}/faces/{random.randint(1, 1e10)}.png'
+            index.append((name, face_path, embeddings[j], locations[j]))
+            img = Image.fromarray(image[fl[0]:fl[2],
+                                        fl[3]:fl[1], :])
+            img.save(face_path)
+
+    # with open(f'data/{username}/index.pkl', 'wb') as f:
+    #     pickle.dump(index, f)
+
+    context.user_data[HAS_MESSAGE] = False
+
+    return MARKING
 
 
 async def downloading_results(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -138,10 +176,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(f"Until next time!")
-
-
-async def get_results(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text(f'')
 
 
 async def random_face(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -217,25 +251,10 @@ def main() -> None:
         states={
             UPLOAD_IMAGES: [
                 MessageHandler(
-                    filters.PHOTO, upload_images), CommandHandler('done', processing_images)
+                    filters.PHOTO, upload_images), CommandHandler('done', processing_images), marking_conv
             ],
-            SELECTING_ACTION: [marking_conv,
-                               CallbackQueryHandler(
-                                   upload_images, pattern="^" + str(UPLOAD_IMAGES) + "$"),
-                               CallbackQueryHandler(downloading_results, pattern="^" +
-                                                    str(DOWNLOADING_RESULTS) + "$")],
-            PROCESSING: [
-                MessageHandler(
-                    filters.TEXT & ~(filters.COMMAND | filters.Regex(
-                        "^Done$")), processing_images
-                )
-            ],
-            DOWNLOADING_RESULTS: [
-                CallbackQueryHandler(
-                    downloading_results, pattern="^" +
-                    str(DOWNLOADING_RESULTS) + "$"
-                )
-            ],
+            SELECTING_ACTION: [marking_conv],
+            MARKING: [marking_conv],
             DONE: [
                 CallbackQueryHandler(done, pattern="^" + str(DONE) + "$")
             ]
