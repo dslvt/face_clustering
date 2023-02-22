@@ -8,6 +8,9 @@ from PIL import Image
 import io
 import time
 from person import Person, FImage
+import hashlib
+import os
+
 
 from telegram import __version__ as TG_VER
 
@@ -51,8 +54,12 @@ reply_keyboard = [
 markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 
 
-def has_user_preprocessed_images():
-    return True
+def has_user_preprocessed_images(user_name):
+    directory = f'data/{user_name}'
+    full_path = f'{directory}/index.pkl'
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    return os.path.exists(full_path)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -60,21 +67,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Hi, I'm Wedding Face bot."
     )
 
-    if has_user_preprocessed_images():
+    if has_user_preprocessed_images(update.message.chat.username):
         buttons = [[
             InlineKeyboardButton(text='Yes', callback_data=str(MARKING)),
             InlineKeyboardButton(text='No', callback_data=str(UPLOAD_IMAGES))
         ]]
         keyboard = InlineKeyboardMarkup(buttons)
         await update.message.reply_text('You have already preprocessed images. Do you want continue?', reply_markup=keyboard)
-    return SELECTING_ACTION
+        return SELECTING_ACTION
+    else:
+        await update.message.reply_text(text='Send images there. zip or jpeg(s)')
+        return UPLOAD_IMAGES
 
 
 async def upload_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.callback_query.answer()
-    await update.callback_query.edit_message_text(text='Send images there')
+    photo_file = await update.message.photo[-1].get_file()
+    photo_name = photo_file.file_id
+    await photo_file.download_to_drive(f'data/{update.message.chat.username}/raw_{photo_name}')
 
-    return PROCESSING
+    return UPLOAD_IMAGES
 
 
 async def marking_images(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -205,7 +216,8 @@ def main() -> None:
         entry_points=[CommandHandler('start', start)],
         states={
             UPLOAD_IMAGES: [
-                MessageHandler(filters.TEXT, upload_images)
+                MessageHandler(
+                    filters.PHOTO, upload_images), CommandHandler('done', processing_images)
             ],
             SELECTING_ACTION: [marking_conv,
                                CallbackQueryHandler(
